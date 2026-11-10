@@ -1,0 +1,115 @@
+name: Linux binaries
+
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-binaries
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_sha == github.sha &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.metadata.outputs.commit }}
+      tag: ${{ steps.metadata.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Identify the exact source commit
+        id: metadata
+        run: |
+          commit=$(git rev-parse HEAD)
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "tag=main-${commit:0:12}" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build embedded web assets
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Download and verify Go modules
+        env:
+          GOPROXY: https://proxy.golang.org,direct
+          GOSUMDB: sum.golang.org
+          GONOSUMDB: ''
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Build Web and no-Web standalone Linux binaries
+        run: bash .github/build-linux.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/linux/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/linux
+
+      - name: Verify downloaded artifacts
+        working-directory: dist/linux
+        run: sha256sum -c SHA256SUMS
+
+      - name: Publish binaries as a prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_COMMIT: ${{ needs.build.outputs.commit }}
+          BUILD_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$BUILD_TAG" --json url > /dev/null 2>&1; then
+            gh release upload "$BUILD_TAG" dist/linux/* --clobber
+          else
+            printf 'Automatic Linux build of commit %s.\n\n' "$BUILD_COMMIT" > release-notes.md
+            printf 'Choose the Web or no-Web binary for amd64 or arm64, then verify it with SHA256SUMS. Files ending in -no-web omit the web frontend.\n' >> release-notes.md
+            gh release create "$BUILD_TAG" dist/linux/* \
+              --target "$BUILD_COMMIT" \
+              --title "Linux build $BUILD_TAG" \
+              --notes-file release-notes.md \
+              --prerelease
+          fi

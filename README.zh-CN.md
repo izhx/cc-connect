@@ -398,6 +398,12 @@ sudo mv cc-connect /usr/local/bin/
 
 ```
 
+**Linux x86_64 / ARM64 自动构建：**
+
+仓库支持在 `main` 的 CI 通过后，将带 Web 界面和无 Web 界面的两种单文件程序发布到 GitHub Releases，
+每种均提供 x86_64 和 ARM64 架构。
+下载、校验和手动触发方法见 [Linux 自动构建与下载](docs/linux-builds.md)。
+
 **从源码编译（需要 Go 1.22+）：**
 
 ```bash
