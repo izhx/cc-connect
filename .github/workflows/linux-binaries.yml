@@ -69,7 +69,7 @@ jobs:
           go mod download
           go mod verify
 
-      - name: Build standalone Linux binaries
+      - name: Build Web and no-Web standalone Linux binaries
         run: bash .github/build-linux.sh
 
       - uses: actions/upload-artifact@v4
@@ -106,7 +106,7 @@ jobs:
             gh release upload "$BUILD_TAG" dist/linux/* --clobber
           else
             printf 'Automatic Linux build of commit %s.\n\n' "$BUILD_COMMIT" > release-notes.md
-            printf 'Download the amd64 or arm64 binary for your server, then verify it with SHA256SUMS.\n' >> release-notes.md
+            printf 'Choose the Web or no-Web binary for amd64 or arm64, then verify it with SHA256SUMS. Files ending in -no-web omit the web frontend.\n' >> release-notes.md
             gh release create "$BUILD_TAG" dist/linux/* \
               --target "$BUILD_COMMIT" \
               --title "Linux build $BUILD_TAG" \

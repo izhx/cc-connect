@@ -2,14 +2,19 @@
 
 `main` 分支每次更新并通过 `CI` 工作流后，`Linux binaries` 工作流会自动构建并发布：
 
-| 运行环境中的 `uname -m` | 架构 | 下载文件 |
-| --- | --- | --- |
-| `x86_64` | Linux x86_64 / amd64（64 位 Intel、AMD） | `cc-connect-linux-amd64` |
-| `aarch64`、`arm64` | Linux ARM64 | `cc-connect-linux-arm64` |
+| 运行环境中的 `uname -m` | 架构 | 带 Web 界面 | 无 Web 界面 |
+| --- | --- | --- | --- |
+| `x86_64` | Linux x86_64 / amd64（64 位 Intel、AMD） | `cc-connect-linux-amd64` | `cc-connect-linux-amd64-no-web` |
+| `aarch64`、`arm64` | Linux ARM64 | `cc-connect-linux-arm64` | `cc-connect-linux-arm64-no-web` |
 
-这两个文件都是静态链接的可执行程序，内嵌 Web 管理界面。运行 cc-connect 本体无需
+这四个文件都是静态链接的可执行程序。不带后缀的版本内嵌 Web 管理界面；
+`-no-web` 版本使用仓库已有的 `no_web` 构建标记，不包含 Web 前端，适合通过配置文件
+和企微等聊天平台使用。运行 cc-connect 本体无需
 安装 Go、Node.js 或 pnpm。Claude Code、Codex 等 Agent 功能仍需要对应 CLI 及其运行环境。
 32 位 x86 和 ARMv7 不在此工作流的构建范围内。
+
+没有 SSH 或无法访问服务器网页时，可在本地电脑下载对应架构的 `-no-web` 文件，
+通过现有的容器或服务器管理面板上传替换，沿用现有配置和启动方式。
 
 ## 自动发布与手动构建
 
@@ -17,7 +22,7 @@
   仍是 `main` 最新提交，才自动构建发布；已被更新提交取代的 CI 和 PR 的 CI 不会触发发布。
 - 在仓库 **Actions → Linux binaries → Run workflow** 中选择 `main`，也可以手动构建发布。
   手动构建是独立入口，不等待另一次 CI。
-- 每个 commit 对应一个 `main-<12位commit>` 预发布版本，附带两个程序、`SHA256SUMS`
+- 每个 commit 对应一个 `main-<12位commit>` 预发布版本，附带四个程序、`SHA256SUMS`
   和 `build-info.txt`。手动重跑同一 commit 会更新该版本的附件。
 - 构建附件也会在该次 Actions 运行中保留 14 天；Releases 中的附件不受此保留期影响。
 - 仓库需要启用 GitHub Actions，并允许工作流通过 `GITHUB_TOKEN` 写入 Releases。
@@ -41,7 +46,8 @@ case "$(uname -m)" in
   *) echo '此下载示例仅支持 Linux x86_64 和 ARM64' >&2; exit 1 ;;
 esac
 
-asset="cc-connect-linux-$arch"
+variant=-no-web  # 无 Web 版本；如需带 Web 界面，改成 variant=
+asset="cc-connect-linux-$arch$variant"
 base="https://github.com/$repo/releases/download/$version"
 curl -fL --retry 3 "$base/$asset" -o "$asset"
 curl -fL --retry 3 "$base/SHA256SUMS" -o SHA256SUMS
@@ -53,8 +59,9 @@ chmod +x "$asset"
 校验成功后，先停止原 cc-connect 进程，再替换程序并使用原配置启动：
 
 ```bash
-./cc-connect-linux-amd64 --config /path/to/config.toml
-# ARM64 使用 ./cc-connect-linux-arm64
+./cc-connect-linux-amd64-no-web --config /path/to/config.toml
+# ARM64 使用 ./cc-connect-linux-arm64-no-web
+# 带 Web 版本去掉文件名中的 -no-web 后缀
 ```
 
 更新时保留原 `config.toml`、`data_dir` 和 Claude CLI 的 Session / Transcript 目录。
@@ -75,6 +82,7 @@ bash .github/build-linux.sh
 ```
 
 产物位于 `dist/linux/`，版本号取自 commit，构建时间字段使用提交时间以便复现。
-脚本通过 `CGO_ENABLED=0` 和仓库已有的 `goolm` 构建标记，
-为两种架构编译完整程序，并检查 ELF 架构、静态链接和 SHA-256 校验值；在构建机
+脚本通过 `CGO_ENABLED=0` 和仓库已有的 `goolm` 构建标记，分别为两种架构编译
+带 Web 的程序，以及额外使用 `no_web` 标记的无 Web 程序，共四个产物。
+脚本检查 ELF 架构、静态链接和 SHA-256 校验值；在构建机
 架构匹配时还会执行 `--version`。交叉编译的 ARM64 程序仍需在 ARM64 服务器上验证运行。
