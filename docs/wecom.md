@@ -61,6 +61,7 @@ bot_id = "your-bot-id"
 bot_secret = "your-bot-secret"
 ws_url = "wss://openws.work.weixin.qq.com"   # optional; 私有化部署时填写私有 WebSocket 地址
 allow_from = "*"
+share_session_in_channel = false  # 可选：设为 true 后同群共享会话，私聊仍按用户隔离
 ```
 
 #### 配置项说明
@@ -72,6 +73,46 @@ allow_from = "*"
 | `bot_secret` | ✅ | 智能机器人 Secret |
 | `ws_url` | ❌ | WebSocket 端点地址（默认 `wss://openws.work.weixin.qq.com`；**私有化部署**时改为你的私有地址，如 `wss://your-wecom-host:port/im_openws?bizid=<id>`） |
 | `allow_from` | ❌ | 允许的用户 ID（默认 `"*"` 允许所有） |
+| `share_session_in_channel` | ❌ | 仅 WebSocket 模式支持，默认 `false`。设为 `true` 时，同群成员共享一个 Agent 会话；不同群、不同私聊仍相互隔离 |
+
+#### 群聊协作：共享 Session
+
+在 `[projects.platforms.options]` 下设置 `share_session_in_channel = true`，重启
+cc-connect 后生效。同群中 Alice、Bob 等成员发给机器人的消息会使用同一个
+`wecom:<chatID>:shared/group` 会话键，继续同一个 Claude Code Session。
+不设置或设为 `false` 时保留原来的 `wecom:<chatID>:<userID>` 行为。
+共享标识使用 `shared/group`，其中 `/` 不属于企微用户 ID 的合法字符，避免与
+真实用户 ID 为 `shared` 的旧会话键冲突；会话键仍然保持三段式。
+
+如需让 Claude 区分发送者，复用项目级 `inject_sender`（放在 `[[projects]]` 下，
+不要放进平台 options）：
+
+```toml
+[[projects]]
+name = "remote-claude"
+inject_sender = true
+
+# 原有的 [projects.agent] 和 [projects.agent.options] 配置保持不变。
+
+[[projects.platforms]]
+type = "wecom"
+
+[projects.platforms.options]
+mode = "websocket"
+bot_id = "${WECOM_BOT_ID}"
+bot_secret = "${WECOM_BOT_SECRET}"
+allow_from = "alice,bob"
+share_session_in_channel = true
+```
+
+- 真实 `UserID` 和每条消息的回复上下文保持不变，`allow_from` 仍按真实发送者检查；
+  开启 `inject_sender` 后，发送给 Agent 的消息带有发送者身份。
+- `/new`、`/list`、`/switch` 操作同群共享的会话，切换对群内所有成员生效；
+  `/ps` 可继续补充正在运行的任务。并发消息沿用现有会话锁及排队机制。
+- 回复仍通过原始消息回调返回对应群；重启后的主动推送通过会话键中的群 ID 路由。
+- 开启共享模式会使用共享会话键，不删除或自动合并旧的按用户区分的会话及 Claude
+  Transcript；关闭此开关后，后续消息恢复使用原来的按用户区分的会话键。
+  会话持久化、闲置重置和消息显示模式的配置均不改变。
 
 ### 第三步：启动并验证
 

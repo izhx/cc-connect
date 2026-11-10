@@ -11284,6 +11284,18 @@ func TestBuildSenderPrompt_Disabled(t *testing.T) {
 	}
 }
 
+func TestBuildSenderPrompt_SharedSessionPreservesSender(t *testing.T) {
+	e := newTestEngine()
+	e.SetInjectSender(true)
+	for _, userID := range []string{"alice", "bob"} {
+		got := e.buildSenderPrompt("hello", userID, userID, "wecom", "wecom:groupA:shared/group", "")
+		want := fmt.Sprintf("[cc-connect sender_id=%s sender_name=\"%s\" platform=wecom chat_id=groupA]\nhello", userID, userID)
+		if got != want {
+			t.Errorf("sender %s: got %q, want %q", userID, got, want)
+		}
+	}
+}
+
 func TestBuildSenderPrompt_EmptyUserID(t *testing.T) {
 	e := newTestEngine()
 	e.SetInjectSender(true)
