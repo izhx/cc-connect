@@ -20,24 +20,28 @@ const (
 	wsPingInterval  = 30 * time.Second
 	wsMaxBackoff    = 30 * time.Second
 	wsMaxMissedPong = 2
+	// '/' is not valid in a WeCom user ID, so this cannot collide with
+	// a legacy per-user key (including a user whose ID is "shared").
+	wsSharedSessionMarker = "shared/group"
 )
 
 // WSPlatform implements core.Platform using the WeChat Work WebSocket long-connection
 // mode (智能机器人长连接). No public URL, no message encryption, no IP allowlist required.
 type WSPlatform struct {
-	botID       string
-	secret      string
-	allowFrom   string
-	wsURL       string // WebSocket endpoint; defaults to wsEndpoint (公有云), 可经 ws_url 覆盖为私有化部署地址
-	conn        *websocket.Conn
-	handler     core.MessageHandler
-	ctx         context.Context
-	cancel      context.CancelFunc
-	mu          sync.Mutex // protects conn writes
-	dedup       core.MessageDedup
-	reqSeq      atomic.Int64 // monotonic counter for generating unique req_id
-	missedPong  atomic.Int32 // consecutive heartbeat acks not received
-	pendingAcks sync.Map     // req_id -> chan wsAckResult, for sequential send with ack waiting
+	botID                 string
+	secret                string
+	allowFrom             string
+	shareSessionInChannel bool
+	wsURL                 string // WebSocket endpoint; defaults to wsEndpoint (公有云), 可经 ws_url 覆盖为私有化部署地址
+	conn                  *websocket.Conn
+	handler               core.MessageHandler
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	mu                    sync.Mutex // protects conn writes
+	dedup                 core.MessageDedup
+	reqSeq                atomic.Int64 // monotonic counter for generating unique req_id
+	missedPong            atomic.Int32 // consecutive heartbeat acks not received
+	pendingAcks           sync.Map     // req_id -> chan wsAckResult, for sequential send with ack waiting
 }
 
 const (
@@ -125,6 +129,7 @@ func newWebSocket(opts map[string]any) (core.Platform, error) {
 		return nil, fmt.Errorf("wecom-ws: bot_id and bot_secret are required for websocket mode")
 	}
 	allowFrom, _ := opts["allow_from"].(string)
+	shareSessionInChannel, _ := opts["share_session_in_channel"].(bool)
 	wsURL, _ := opts["ws_url"].(string)
 	wsURL = strings.TrimSpace(wsURL)
 	if wsURL == "" {
@@ -132,10 +137,11 @@ func newWebSocket(opts map[string]any) (core.Platform, error) {
 	}
 
 	return &WSPlatform{
-		botID:     botID,
-		secret:    secret,
-		allowFrom: allowFrom,
-		wsURL:     wsURL,
+		botID:                 botID,
+		secret:                secret,
+		allowFrom:             allowFrom,
+		shareSessionInChannel: shareSessionInChannel,
+		wsURL:                 wsURL,
 	}, nil
 }
 
@@ -405,6 +411,9 @@ func (p *WSPlatform) handleMsgCallback(frame wsFrame) {
 	}
 
 	sessionKey := fmt.Sprintf("wecom:%s:%s", chatID, body.From.UserID)
+	if body.ChatType == "group" && p.shareSessionInChannel {
+		sessionKey = fmt.Sprintf("wecom:%s:%s", chatID, wsSharedSessionMarker)
+	}
 
 	// WS mode does not provide display names; the protocol only carries userID.
 	// Name resolution would require a separate HTTP API call with corpSecret,
@@ -540,15 +549,19 @@ func (p *WSPlatform) Send(ctx context.Context, rctx any, content string) error {
 }
 
 // ReconstructReplyCtx rebuilds a reply context from a session key.
-// Session key format: "wecom:{chatID}:{userID}".
+// Session key format: "wecom:{chatID}:{userID}" or "wecom:{chatID}:shared/group".
 // The reconstructed context has no req_id, so Reply() (which needs req_id for
 // aibot_respond_msg) won't work — the engine should use Send() (aibot_send_msg)
 // for cron/relay scenarios.
 func (p *WSPlatform) ReconstructReplyCtx(sessionKey string) (any, error) {
-	// wecom:{chatID}:{userID}
 	parts := strings.SplitN(sessionKey, ":", 3)
 	if len(parts) < 3 || parts[0] != "wecom" {
 		return nil, fmt.Errorf("wecom-ws: invalid session key %q", sessionKey)
+	}
+	if parts[2] == wsSharedSessionMarker {
+		// A shared key identifies the group, not a message sender. There is
+		// no originating user or callback req_id for a proactive message.
+		return wsReplyContext{chatID: parts[1], chatType: "group"}, nil
 	}
 	return wsReplyContext{chatID: parts[1], userID: parts[2]}, nil
 }

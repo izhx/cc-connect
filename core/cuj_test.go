@@ -2157,6 +2157,44 @@ func TestCUJ_H3_SharedSessionLinkedToIntegration(t *testing.T) {
 	t.Log("CUJ-H3: covered by release-gate TestCC_SESSION_01_share_session")
 }
 
+func TestCUJ_H6_SharedGroupMembersManageOneSession(t *testing.T) {
+	env := newCUJEnv(t)
+	t.Cleanup(func() { _ = env.engine.Stop() })
+	const groupKey = "test:groupA:shared/group"
+	seq := 0
+	send := func(key, userID, content string) string {
+		t.Helper()
+		seq++
+		env.plat.clearSent()
+		env.engine.ReceiveMessage(env.plat, &Message{
+			SessionKey: key, Platform: "test", MessageID: fmt.Sprintf("shared-%d", seq),
+			UserID: userID, UserName: userID, Content: content, ReplyCtx: key,
+		})
+		env.waitFor("shared group reply", 2*time.Second, func() bool {
+			return len(env.plat.getSent()) > 0 && !env.activeSession(key).Busy()
+		})
+		return strings.Join(env.plat.getSent(), "\n")
+	}
+
+	// Alice's first message is visible to Bob in the same group.
+	send(groupKey, "alice", "first group conversation")
+	if got := send(groupKey, "bob", "/history"); !strings.Contains(got, "first group conversation") {
+		t.Fatalf("Bob cannot see Alice's group history: %s", got)
+	}
+
+	// Bob's /new applies to Alice too; their new conversation has separate history.
+	send(groupKey, "bob", "/new")
+	send(groupKey, "alice", "second group conversation")
+	if got := send(groupKey, "bob", "/history"); !strings.Contains(got, "second group conversation") || strings.Contains(got, "first group conversation") {
+		t.Fatalf("group members did not share the new session: %s", got)
+	}
+	for _, key := range []string{"test:groupB:shared/group", "test:alice:alice"} {
+		if got := send(key, "alice", "/history"); strings.Contains(got, "first group conversation") || strings.Contains(got, "second group conversation") {
+			t.Fatalf("shared group history leaked into %s: %s", key, got)
+		}
+	}
+}
+
 // ===========================================================================
 // SPRINT 2 · I organization (UI rendering correctness)
 // ===========================================================================

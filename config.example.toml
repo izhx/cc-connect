@@ -1519,6 +1519,9 @@ app_secret = "your-feishu-app-secret"
 # bot_secret = "your-bot-secret"
 # ws_url = "wss://your-wecom-host:port/im_openws?bizid=10001"  # optional / 可选：私有化部署 WebSocket 地址，留空默认公有云 wss://openws.work.weixin.qq.com
 # allow_from = "*"  # Allowed user IDs / 允许的用户 ID
+# share_session_in_channel = false  # WebSocket only: share one session per group; DMs stay per-user / 仅 WebSocket：群内共享会话，私聊仍按用户隔离
+# Set inject_sender = true under [[projects]] to identify senders in shared sessions.
+# 可在 [[projects]] 下设置 inject_sender = true，让 Agent 区分共享会话中的真实发送者。
 
 # Weixin personal (ilink bot) / 微信个人号（ilink 机器人网关）
 # Same HTTP API as OpenClaw @tencent-weixin/openclaw-weixin: long-poll getUpdates + sendMessage.
